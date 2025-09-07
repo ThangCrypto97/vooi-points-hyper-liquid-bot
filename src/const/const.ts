@@ -1,0 +1,9 @@
+export const HYPERLIQUID_REFERRAL_CODE = "VOOI";
+
+export const HYPERLIQUID_DEFAULT_SLIPPAGE = "0.08"; // 8%
+
+export const CLOSE_POSITION_SLIPPAGE = 0.08; // 8%
+
+export const HYPERLIQUID_MAX_SIGNIFICANT_FIGURES = 5;
+
+export const MIN_HYPERLIQUID_LEVERAGE = 1;

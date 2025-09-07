@@ -1,0 +1,59 @@
+.appRoot {
+  display: flex;
+  gap: 4px;
+  height: 100vh;
+  width: 100vw;
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+.leftColumn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.authButtons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.accountCard {
+  padding: 4px;
+}
+
+.accountRow {
+  margin-bottom: 2px;
+}
+
+.muted {
+  margin-left: 4px;
+}
+
+.controlsCard {
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldLabel {
+  margin-bottom: 2px;
+}
+
+.rightColumn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.placeholder {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 30vh;
+}

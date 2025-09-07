@@ -1,0 +1,51 @@
+.logPanel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 4px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 4px;
+  margin-bottom: 2px;
+}
+
+.title {
+  font-weight: bold;
+}
+
+.toolbar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.autoLabel {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.checkbox {
+  width: 14px;
+  height: 14px;
+}
+
+.container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.entry {
+  text-align: left;
+  padding: 2px 0;
+  white-space: pre-wrap;
+}
