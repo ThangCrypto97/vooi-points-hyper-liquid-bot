@@ -6,7 +6,8 @@
       "Bash(npm run build:*)",
       "Bash(git add:*)",
       "Bash(cat:*)",
-      "Bash(npm install)"
+      "Bash(npm install)",
+      "Bash(git remote get-url:*)"
     ],
     "deny": [],
     "ask": []
