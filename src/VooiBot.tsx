@@ -1,26 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  PerpsAssetCtx,
-  PerpsClearinghouseState,
-  PerpsMeta,
-} from "@nktkas/hyperliquid";
-import { HttpTransport, InfoClient } from "@nktkas/hyperliquid";
-import type { ActiveAgent, PlacedHyperliquidOrder } from "~/types";
+import type { PerpsAssetCtx, PerpsMeta } from "@nktkas/hyperliquid";
 import { useWalletClient } from "wagmi";
-import Decimal from "decimal.js-light";
-import { hyperliquidFormatQuantity } from "~/helpers/utils";
-import { getHyperliquidMarkPriceWithSlippage } from "~/helpers/getHyperliquidMarkPriceWithSlippage";
-import { createOrder } from "~/helpers/createOrder";
 import { ConnectWalletButton } from "~/components/ConnectWalletButton";
 import { LoginButton } from "~/components/LoginButton";
-import { DEFAULT_FEE, HYPERLIQUID_CONFIG } from "~/config";
+import { HYPERLIQUID_CONFIG } from "~/config";
 import { MIN_HYPERLIQUID_LEVERAGE } from "~/const/const";
 import { updateLeverage } from "~/helpers/updateLeverage";
 import styles from "./App.module.css";
 import LogPanel from "~/components/LogPanel/LogPanel";
 import { formatAmount } from "~/helpers/formatAmount";
+import { useWebSocketData } from "~/hooks/useWebSocketData";
+import { useTradingBot } from "~/hooks/useTradingBot";
+import { LOCAL_STORAGE_HYPERLIQUID_KEY } from "~/const/localStorageKeys";
+import type { ActiveAgent } from "~/types";
 
-const REPEAT_INTERVAL = 2; // Seconds
 const LEVERAGE_DEBOUNCE_MS = 1500; // debounce delay for leverage input
 
 type PerpsUniverseItem = PerpsMeta["universe"][number];
@@ -31,25 +24,27 @@ export interface PerpsAssetWithMeta extends PerpsAssetCtx, PerpsUniverseItem {
 
 export function VooiBot() {
   const [loading, setLoading] = useState<boolean>(false);
-  const [assetsWithMeta, setAssetsWithMeta] = useState<PerpsAssetWithMeta[]>();
-  const [clearinghouseState, setClearinghouseState] =
-    useState<PerpsClearinghouseState>();
   const [selectedAsset, setSelectedAsset] = useState<PerpsAssetWithMeta>();
+  const [assetsWithMeta, setAssetsWithMeta] = useState<PerpsAssetWithMeta[]>();
   const [logs, setLogs] = useState<string[]>([]);
-  const timeoutId = useRef<number | null>(null);
-  const isLooping = useRef(false);
-  const isIterationStarted = useRef(false);
   const [agent, setAgent] = useState<ActiveAgent | null>(null);
   const [isBuy, setIsBuy] = useState<boolean>(true);
   const [margin, setMargin] = useState<number>(10);
   const [leverage, setLeverage] = useState<number>(10);
-  const [leverageInput, setLeverageInput] = useState<string>('10');
+  const [leverageInput, setLeverageInput] = useState<string>("10");
   const leverageDebounceTimer = useRef<number | null>(null);
 
   const walletClient = useWalletClient().data;
   const address = walletClient?.account.address;
+
+  // Use WebSocket hooks for real-time data
+  const {
+    clearinghouseState,
+    isConnected: isUserDataConnected,
+    error: userDataError,
+  } = useWebSocketData(address);
+
   const balance = parseFloat(clearinghouseState?.withdrawable ?? "0");
-  const isStartDisabled = isIterationStarted.current && !isLooping.current;
 
   const pushLog = useCallback(
     (log: string) =>
@@ -60,49 +55,99 @@ export function VooiBot() {
     [],
   );
 
-  const infoClient = useMemo(() => {
-    const transport = new HttpTransport();
-    return new InfoClient({ transport });
-  }, []);
-
-  const refetechData = useCallback(async () => {
-    if (!address) {
-      return;
+  // Trading bot configuration
+  const tradingBotConfig = useMemo(() => {
+    if (!agent || !address) {
+      return null;
     }
-    try {
-      const clearinghouseState = await infoClient.clearinghouseState({
-        user: address,
-      });
-      const metaAndAssetCtxs = await infoClient.metaAndAssetCtxs();
 
-      const meta = metaAndAssetCtxs[0];
-      const assets = metaAndAssetCtxs[1];
-      const assetsWithMeta = assets.map((asset, assetIndex) => ({
-        ...asset,
-        ...meta.universe[assetIndex],
-        assetIndex,
-      }));
+    return {
+      agent,
+      selectedAsset, // optional; TradingBot loads assets and we set default
+      margin,
+      leverage,
+      isBuy,
+      balance,
+      address,
+    };
+  }, [agent, selectedAsset, margin, leverage, isBuy, balance, address]);
 
-      setClearinghouseState(clearinghouseState);
-      setAssetsWithMeta(assetsWithMeta);
-    } catch (e) {
-      if (e instanceof Error) {
-        pushLog(`Error refetching data ${e.message}`);
-      } else {
-        pushLog(`Unknown error refetching data.`);
-      }
-    }
-  }, [address, infoClient, pushLog]);
+  // Trading bot callbacks
+  const tradingBotCallbacks = useMemo(
+    () => ({
+      onLog: (message: string) => pushLog(message),
+      onError: (error: string) => pushLog(error),
+      onPositionOpened: () => {
+        // Additional logic when position is opened if needed
+      },
+      onPositionClosed: () => {
+        // Additional logic when position is closed if needed
+      },
+      onAssetsLoaded: (assets: PerpsAssetWithMeta[]) => {
+        setAssetsWithMeta(assets);
+        if (!selectedAsset && assets.length > 0) {
+          setSelectedAsset(assets[0]);
+        }
+      },
+    }),
+    [pushLog, selectedAsset],
+  );
+
+  const {
+    start: startTrading,
+    stop: stopTrading,
+    isRunning,
+    isProcessing,
+    isTradingConnected,
+    tradingError,
+  } = useTradingBot({
+    config: tradingBotConfig,
+    callbacks: tradingBotCallbacks,
+    // trading class owns its WS and loop
+  });
+
+  // Allow stopping even while processing; only disable starting when processing
+  const isStartDisabled = isProcessing;
+  const isStopDisabled = false;
 
   useEffect(() => {
-    if (address) {
-      setLoading(true);
-      refetechData().then(() => setLoading(false));
-    } else {
+    if (!address) {
       setAgent(null);
-      setClearinghouseState(undefined);
     }
-  }, [address, refetechData]);
+  }, [address]);
+
+  // Restore Vooi token (agent) from localStorage when wallet is connected
+  useEffect(() => {
+    if (!address || agent) return;
+    try {
+      const stored = localStorage.getItem(LOCAL_STORAGE_HYPERLIQUID_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as ActiveAgent;
+        if (
+          parsed?.address &&
+          parsed?.privateKey &&
+          parsed.address.toLowerCase() === address.toLowerCase()
+        ) {
+          setAgent(parsed);
+        }
+      }
+    } catch {
+      // ignore malformed storage
+    }
+  }, [address, agent]);
+
+  // Log WebSocket connection errors
+  useEffect(() => {
+    if (userDataError) {
+      pushLog(`User data connection error: ${userDataError}`);
+    }
+  }, [userDataError, pushLog]);
+
+  useEffect(() => {
+    if (tradingError) {
+      pushLog(`Trading error: ${tradingError}`);
+    }
+  }, [tradingError, pushLog]);
 
   useEffect(() => {
     if (!selectedAsset && assetsWithMeta) {
@@ -122,135 +167,8 @@ export function VooiBot() {
         clearTimeout(leverageDebounceTimer.current);
         leverageDebounceTimer.current = null;
       }
-    }
+    };
   }, []);
-
-  const openPosition = async () => {
-    if (!agent || !selectedAsset || !margin) return;
-
-    try {
-      if (margin > balance) {
-        throw new Error("Margin exceeds available balance");
-      }
-
-      const amountDecimal = new Decimal(margin).mul(leverage);
-
-      const fee = new Decimal(amountDecimal).mul(DEFAULT_FEE);
-      const quantityDecimal = amountDecimal.div(selectedAsset.markPx || 1);
-
-      const quantity = hyperliquidFormatQuantity(
-        quantityDecimal.toNumber(),
-        selectedAsset.szDecimals,
-      );
-
-      const baseOrder = {
-        asset: selectedAsset.assetIndex,
-        isBuy,
-        price: getHyperliquidMarkPriceWithSlippage(
-          isBuy,
-          selectedAsset,
-        ).toString(),
-        size: quantity.toString(),
-        isReduceOnly: false,
-      };
-
-      pushLog(
-        `Open order: ${isBuy ? "Long" : "Short"} ${selectedAsset.name}x${leverage} with $${amountDecimal} size and $${fee} fee`,
-      );
-
-      await createOrder(agent, {
-        orders: [
-          {
-            ...baseOrder,
-            type: {
-              limit: {
-                tif: "Gtc",
-              },
-            },
-          },
-        ],
-        grouping: "na",
-      });
-
-      pushLog("Position successfully opened!");
-    } catch (e) {
-      if (e instanceof Error) {
-        pushLog(`Error opening position: ${e.message}`);
-      } else {
-        pushLog(`Unknown error opening position.`);
-      }
-
-      throw e;
-    }
-  };
-
-  const closePosition = async () => {
-    if (!assetsWithMeta || !agent || !address) {
-      return;
-    }
-
-    try {
-      pushLog("Refreshing positions data...");
-
-      const positions = (await infoClient.clearinghouseState({ user: address }))
-        .assetPositions;
-      const position = positions[0].position;
-
-      if (!position) {
-        throw new Error("Position not found");
-      }
-
-      pushLog("Positions data updated.");
-
-      const asset = assetsWithMeta.find((a) => a.name === position.coin);
-
-      if (!asset) {
-        throw new Error("Incorrect symbol");
-      }
-
-      const positionSize = new Decimal(position.szi);
-      const usdSize = positionSize.mul(asset.markPx);
-      const isBuy = positionSize.lte(0);
-
-      const closeOrder: PlacedHyperliquidOrder = {
-        asset: asset.assetIndex,
-        isBuy,
-        price: getHyperliquidMarkPriceWithSlippage(isBuy, asset).toString(),
-        size: positionSize.abs().toString(),
-        isReduceOnly: true,
-        type: {
-          limit: {
-            tif: "Gtc",
-          },
-        },
-      };
-
-      pushLog(
-        `Close order for position: ${!isBuy ? "Long" : "Short"} ${position.coin}x${position.leverage.value} with $${usdSize} size`,
-      );
-
-      await createOrder(agent, {
-        orders: [closeOrder],
-        grouping: "na",
-      });
-
-      pushLog("Position successfully closed!");
-    } catch (e) {
-      if (e instanceof Error) {
-        pushLog(`Error closing position: ${e.message}`);
-      } else {
-        pushLog(`Unknown error closing position.`);
-      }
-
-      throw e;
-    }
-
-    pushLog("Refreshing market data and balance...");
-
-    await refetechData();
-
-    pushLog("Market and balance data updated.");
-  };
 
   const onSelectedAssetChange = (
     event: React.ChangeEvent<HTMLSelectElement>,
@@ -336,7 +254,7 @@ export function VooiBot() {
 
   const onBlur = () => {
     let newLeverage = leverageInput;
-    if (leverageInput.trim() === '') {
+    if (leverageInput.trim() === "") {
       newLeverage = String(MIN_HYPERLIQUID_LEVERAGE);
       setLeverageInput(newLeverage);
     }
@@ -346,65 +264,11 @@ export function VooiBot() {
       clearTimeout(leverageDebounceTimer.current);
       leverageDebounceTimer.current = null;
     }
-  }
+  };
 
   const onMarginChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const newMargin = parseFloat(event.target.value);
     setMargin(newMargin > balance ? balance : newMargin);
-  };
-
-  const start = () => {
-    // Check if already running
-    if (isLooping.current) return;
-
-    isLooping.current = true;
-
-    pushLog("Trading started!");
-
-    async function loop() {
-      // If canceled, exit early
-      if (!isLooping.current) return;
-
-      isIterationStarted.current = true;
-      try {
-        await openPosition();
-        await closePosition();
-        isIterationStarted.current = false;
-        // If canceled, exit early
-        if (!isLooping.current) return;
-
-        pushLog(`Repeating in ${REPEAT_INTERVAL} sec...`);
-        timeoutId.current = window.setTimeout(loop, REPEAT_INTERVAL * 1000);
-      } catch (err) {
-        console.error("Error in loop — stopping:", err);
-        pushLog("Trading stopped due to an error.");
-
-        isLooping.current = false;
-        isIterationStarted.current = false;
-        if (timeoutId.current !== null) {
-          clearTimeout(timeoutId.current);
-          timeoutId.current = null;
-        }
-      }
-    }
-
-    void loop();
-  };
-
-  const stop = () => {
-    if (!isLooping.current && timeoutId.current === null) {
-      pushLog("No active trading loop to stop.");
-      return;
-    }
-
-    isLooping.current = false;
-
-    if (timeoutId.current !== null) {
-      clearTimeout(timeoutId.current);
-      timeoutId.current = null;
-    }
-
-    pushLog("Trading stopped by user. Any open position will be closed.");
   };
 
   return (
@@ -417,7 +281,7 @@ export function VooiBot() {
           )}
         </div>
 
-        {!!balance && (
+        {clearinghouseState && (
           <div className={styles.accountCard}>
             <div className={styles.accountRow}>
               Balance:{" "}
@@ -429,14 +293,31 @@ export function VooiBot() {
                 {HYPERLIQUID_CONFIG.builderFee} BPS
               </span>
             </div>
+
+            <div className={styles.accountRow}>
+              User Data:{" "}
+              <span
+                className={
+                  isUserDataConnected ? styles.connected : styles.disconnected
+                }
+              >
+                {isUserDataConnected ? "Connected" : "Disconnected"}
+              </span>
+            </div>
+            <div className={styles.accountRow}>
+              Trading Events:{" "}
+              <span
+                className={
+                  isTradingConnected ? styles.connected : styles.disconnected
+                }
+              >
+                {isTradingConnected ? "Connected" : "Disconnected"}
+              </span>
+            </div>
           </div>
         )}
 
-        {loading && (
-          <div className={styles.placeholder}>
-            Loading...
-          </div>
-        )}
+        {loading && <div className={styles.placeholder}>Loading...</div>}
 
         {!!agent && !!selectedAsset && (
           <div className={styles.controlsCard}>
@@ -474,12 +355,12 @@ export function VooiBot() {
 
             <div style={{ marginTop: 12 }}>
               <button
-                onClick={isLooping.current ? stop : start}
-                disabled={isStartDisabled}
+                onClick={isRunning ? stopTrading : startTrading}
+                disabled={isRunning ? isStopDisabled : isStartDisabled}
               >
                 {isStartDisabled
-                  ? "Loading..."
-                  : isLooping.current
+                  ? "Processing..."
+                  : isRunning
                     ? "Stop"
                     : "Start"}
               </button>

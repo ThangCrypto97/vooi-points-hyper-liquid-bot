@@ -32,6 +32,18 @@
   margin-left: 4px;
 }
 
+.connected {
+  margin-left: 4px;
+  color: #4caf50;
+  font-weight: 500;
+}
+
+.disconnected {
+  margin-left: 4px;
+  color: #f44336;
+  font-weight: 500;
+}
+
 .controlsCard {
   padding: 4px;
   display: flex;

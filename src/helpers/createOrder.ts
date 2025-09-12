@@ -26,6 +26,7 @@ export async function createOrder(
       s: order.size,
       r: order.isReduceOnly,
       t: order.type,
+      ...(order.clientOrderId ? { c: order.clientOrderId } : {}),
     })),
     grouping: params.grouping,
     builder: {
